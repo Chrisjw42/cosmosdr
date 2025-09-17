@@ -1,0 +1,18 @@
+[project]
+name = "cosmosdr"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.3.2",
+    "pyrtlsdr[lib]>=0.3.0",
+    "rtl-sdr>=1.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.3.0",
+    "pytest>=8.4.2",
+    "ruff>=0.13.0",
+]
