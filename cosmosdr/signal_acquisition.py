@@ -16,7 +16,12 @@ logger = structlog.get_logger()
 
 class SignalStreamer:
     """
-    Used for a signal acquisition loop.
+    A Tool for establishing streams of data from an RTL-SDR note that:
+    - this takes a second or so
+    - only one connection can be open at a time
+    - if the connection is not closed properly, the USB port can remain busy
+
+    So, most of this architecture is built around these constraints, we only recreate the connection when we need to.
 
     This object stores the current signal for reference by other logic.
 
@@ -36,7 +41,7 @@ class SignalStreamer:
 
     def start_stream(self, center_freq: float, sample_rate: float, sdr_gain="auto"):
         """
-        Tells the SignalStreamer to begin streaming with a givne set of parameters.
+        Tell the SignalStreamer to begin streaming with a givne set of parameters.
 
         Creates a thread to run the acquisition loop in the background.
         """
@@ -55,14 +60,17 @@ class SignalStreamer:
         self.thread = thread
 
     def stop_stream(self):
+        """Tell the SignalStreamer to stop streaming, if there is an acquisition loop running."""
         if self.thread is None:
             logger.warning("SignalStreamer: Acquisition loop not running")
+            return
 
         # Signal the acquisition loop to stop
         self.enabled = False
 
         # Wait for clean shutdown
         self.thread.join()
+        del self.thread
         self.thread = None
         logger.info("SignalStreamer: Acquisition loop stopped")
 
@@ -70,11 +78,13 @@ class SignalStreamer:
         self, center_freq: float, sample_rate: float, sdr_gain="auto"
     ):
         """
-        Blocking acquisition loop, intended to be run in a background thread.
+        Efficiently handle the SDR connection and begin acquiring samples.
 
-        Will continuously run until self.enabled is set to False.
+        This is intended to be run in a background thread.
 
-        Continuously updates signal_stream.current_signal.
+        It will continuously run until self.enabled is set to False.
+
+        It will Continuously updates signal_stream.current_signal.
         """
         sdr = get_sdr(
             center_freq=center_freq, sample_rate=sample_rate, sdr_gain=sdr_gain
@@ -86,6 +96,7 @@ class SignalStreamer:
             logger.info("Acquisition loop started")
             while self.enabled:
                 self.current_signal = sdr.read_samples(4096)
+
         except Exception as e:
             logger.exception("Error in acquisition loop")
             raise e
@@ -96,7 +107,7 @@ class SignalStreamer:
 
 def get_sdr(center_freq=102.7e6, sample_rate=1e6, sdr_gain="auto"):
     """
-    SDR setup, based on example code from rtlsdr
+    Establish a connection to the RTL-SDR
     """
     sdr = RtlSdr()
     sdr.sample_rate = sample_rate
@@ -107,6 +118,10 @@ def get_sdr(center_freq=102.7e6, sample_rate=1e6, sdr_gain="auto"):
 
 
 async def acquire_signal(center_freq=102.7e6, sample_rate=1e6):
+    """
+    # TODO move this to a demo script, or remove.
+
+    """
     try:
         sdr = get_sdr(center_freq=center_freq, sample_rate=sample_rate)
 
@@ -127,12 +142,13 @@ async def acquire_signal(center_freq=102.7e6, sample_rate=1e6):
 signal_streamer = SignalStreamer()
 
 if __name__ == "__main__":
-    streamer = SignalStreamer()
-    # Excample for how to use the SignalStreamer
+    # Example of how to use the SignalStreamer
+
     # Create the shared state object
+    streamer = SignalStreamer()
     signal_streamer.start_stream(center_freq=102.7e6, sample_rate=2.4e6)
 
-    # Print the output to prove it is changing
+    # Print the output to demonstrate it is being updated
     for i in range(5):
         time.sleep(1)
         logger.info(f"Snapshot {i}", signal=signal_streamer.current_signal[:16])
