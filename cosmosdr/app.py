@@ -2,6 +2,7 @@ from dash import Dash, html, dcc, callback, Output, Input
 import plotly.graph_objects as go
 import numpy as np
 
+
 # Initialize the Dash app
 app = Dash(__name__)
 
@@ -174,6 +175,10 @@ def update_theme(dark_mode_value):
 def update_theme_and_plot(center_freq, sample_rate, gain, auto_gain, theme):
     is_dark = theme["dark_mode"]
     styles = get_styles(is_dark)
+    # print("update_theme_and_plot called")
+    # signal_acq.signal_streamer.start_stream(
+    #     center_freq=center_freq * 1e6, sample_rate=sample_rate, sdr_gain="auto" if "auto" in auto_gain else gain
+    # )
 
     # Convert MHz to Hz for center frequency
     center_freq_hz = center_freq * 1e6

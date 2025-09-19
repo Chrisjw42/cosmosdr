@@ -14,18 +14,84 @@ from threading import Thread
 logger = structlog.get_logger()
 
 
-class SignalStream:
+class SignalStreamer:
     """
     Used for a signal acquisition loop.
 
     This object stores the current signal for reference by other logic.
 
     At any time, the .enabled bool can be set to false, to stop processing.
+
+    Can only stream one signal at a time, because we can only hold one SDR signal open at once.
     """
 
+    def can_start_acquisition(self):
+        return self.thread is None
+
     def __init__(self):
-        self.enabled = False
+        # If thread is none, then no acquisition loop is running, and we can start one
+        self.enabled: bool = False
+        self.thread: Thread | None = None
         self.current_signal = np.array([])
+
+    def start_stream(self, center_freq: float, sample_rate: float, sdr_gain="auto"):
+        """
+        Tells the SignalStreamer to begin streaming with a givne set of parameters.
+
+        Creates a thread to run the acquisition loop in the background.
+        """
+        if not self.can_start_acquisition():
+            logger.warning("SignalStreamer: Acquisition loop already running")
+
+        self.enabled = True
+
+        # Start acquisition loop in background thread
+        thread = Thread(
+            target=self.signal_acquisition_loop,
+            args=(center_freq, sample_rate, sdr_gain),
+            daemon=True,  # stops automatically if main thread exits
+        )
+        thread.start()
+        self.thread = thread
+
+    def stop_stream(self):
+        if self.thread is None:
+            logger.warning("SignalStreamer: Acquisition loop not running")
+
+        # Signal the acquisition loop to stop
+        self.enabled = False
+
+        # Wait for clean shutdown
+        self.thread.join()
+        self.thread = None
+        logger.info("SignalStreamer: Acquisition loop stopped")
+
+    def signal_acquisition_loop(
+        self, center_freq: float, sample_rate: float, sdr_gain="auto"
+    ):
+        """
+        Blocking acquisition loop, intended to be run in a background thread.
+
+        Will continuously run until self.enabled is set to False.
+
+        Continuously updates signal_stream.current_signal.
+        """
+        sdr = get_sdr(
+            center_freq=center_freq, sample_rate=sample_rate, sdr_gain=sdr_gain
+        )
+        try:
+            # Discard initial padding samples
+            sdr.read_samples(2048)
+
+            logger.info("Acquisition loop started")
+            while self.enabled:
+                self.current_signal = sdr.read_samples(4096)
+        except Exception as e:
+            logger.exception("Error in acquisition loop")
+            raise e
+        finally:
+            sdr.close()
+            logger.info("SDR closed, acquisition loop ended")
 
 
 def get_sdr(center_freq=102.7e6, sample_rate=1e6, sdr_gain="auto"):
@@ -58,47 +124,20 @@ async def acquire_signal(center_freq=102.7e6, sample_rate=1e6):
         sdr.close()
 
 
-def signal_acquisition_loop(signal_stream, center_freq=102.7e6, sample_rate=1e6):
-    """
-    Blocking acquisition loop, intended to be run in a background thread.
-
-    Continuously updates signal_stream.current_signal.
-    """
-    sdr = get_sdr(center_freq=center_freq, sample_rate=sample_rate)
-    try:
-        # Discard initial padding samples
-        sdr.read_samples(2048)
-
-        logger.info("Acquisition loop started")
-        while signal_stream.enabled:
-            signal_stream.current_signal = sdr.read_samples(4096)
-    except Exception as e:
-        logger.exception("Error in acquisition loop")
-        raise e
-    finally:
-        sdr.close()
-        logger.info("SDR closed, acquisition loop ended")
-
+signal_streamer = SignalStreamer()
 
 if __name__ == "__main__":
+    streamer = SignalStreamer()
+    # Excample for how to use the SignalStreamer
     # Create the shared state object
-    signal_stream = SignalStream()
-    signal_stream.enabled = True
+    signal_streamer.start_stream(center_freq=102.7e6, sample_rate=2.4e6)
 
-    # Start acquisition loop in background thread
-    thread = Thread(
-        target=signal_acquisition_loop,
-        args=(signal_stream,),
-        daemon=True,  # stops automatically if main thread exits
-    )
-    thread.start()
-
-    # Let it run for a few seconds, simulating main thread doing other work
+    # Print the output to prove it is changing
     for i in range(5):
         time.sleep(1)
-        logger.info(f"Snapshot {i}", signal=signal_stream.current_signal[:16])
+        logger.info(f"Snapshot {i}", signal=signal_streamer.current_signal[:16])
 
     # Stop the acquisition
-    signal_stream.enabled = False
-    thread.join()  # wait for clean shutdown
-    logger.info("Final signal snapshot", signal=signal_stream.current_signal[:16])
+    signal_streamer.stop_stream()
+
+    logger.info("Final signal snapshot", signal=signal_streamer.current_signal[:16])
