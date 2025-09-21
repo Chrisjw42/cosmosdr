@@ -19,7 +19,7 @@ from signal_acquisition import signal_streamer
 from signal_processing import get_frequency_space_np
 
 # How often the stream plot redraws
-UPDATE_FREQUENCY_HZ = 5
+UPDATE_FREQUENCY_HZ = 10
 DEFAULT_FREQUENCY = 1090
 
 logger = structlog.get_logger()
@@ -574,6 +574,7 @@ def toggle_stream(n_clicks, center_freq, sample_rate, gain, auto_gain, button_te
     State("y-axis-max", "data"),
 )
 def stream_signal(n_intervals, y_axis_max):
+    # TODO wrap this whole thing in a timeout, make sure we aren't processing this when the next interval comes along
     if not stream_params.active:
         return no_update
 
