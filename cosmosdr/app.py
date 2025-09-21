@@ -183,12 +183,6 @@ STYLES["button"] = {
     "padding": "0.5rem 1rem",
     "cursor": "pointer",
     "transition": "all 0.2s ease-in-out",
-    ":hover": {
-        "backgroundColor": COLORS["background"]["control_panel"],
-        "borderColor": COLORS["text"]["primary"],
-        "transform": "translateY(-1px)",
-        "boxShadow": "0 2px 4px rgba(0,0,0,0.2)",
-    },
 }
 
 
@@ -467,6 +461,9 @@ def toggle_stream(n_clicks, center_freq, sample_rate, gain, auto_gain, button_te
     if not n_clicks:  # Skip if the button hasn't been clicked
         return no_update
 
+    is_auto = "auto" in (auto_gain or [])
+    sdr_gain = "auto" if is_auto else gain
+
     try:
         is_starting = button_text == "Start Stream"
 
@@ -478,7 +475,7 @@ def toggle_stream(n_clicks, center_freq, sample_rate, gain, auto_gain, button_te
             signal_streamer.start_stream(
                 center_freq=center_freq * 1e6,
                 sample_rate=sample_rate,
-                sdr_gain="auto" if auto_gain else gain,
+                sdr_gain=sdr_gain,
             )
 
             # Update stream parameters
@@ -486,7 +483,7 @@ def toggle_stream(n_clicks, center_freq, sample_rate, gain, auto_gain, button_te
                 center_freq=center_freq,
                 sample_rate=sample_rate,
                 gain=gain,
-                auto_gain="auto" in (auto_gain or []),
+                auto_gain=sdr_gain,
             )
             stream_params.active = True
 
@@ -538,35 +535,6 @@ def toggle_stream(n_clicks, center_freq, sample_rate, gain, auto_gain, button_te
 
 
 @callback(
-    Output("stream-error-display", "children"),
-    [
-        Input("stream-error-store", "data"),
-        Input("center-freq-slider", "value"),
-        Input("sample-rate-input", "value"),
-        Input("gain-slider", "value"),
-        Input("auto-gain-check", "value"),
-    ],
-)
-def display_error(error, center_freq, sample_rate, gain, auto_gain):
-    """Display either stream errors or parameter validation errors"""
-    if error:
-        return f"Error: {error}"
-
-    # Check parameters and display appropriate message
-    if center_freq is None or center_freq < 10 or center_freq > 200:
-        return "Error: Center frequency must be between 10 and 200 MHz"
-
-    if sample_rate is None or sample_rate < 1e5:
-        return "Error: Sample rate must be at least 100 kHz"
-
-    is_auto = "auto" in (auto_gain or [])
-    if not is_auto and (gain is None or gain < 0 or gain > 50):
-        return "Error: Gain must be between 0 and 50 when not in auto mode"
-
-    return ""
-
-
-@callback(
     Output("signal-plot", "extendData"),
     Input("signal-update-interval", "n_intervals"),
 )
@@ -613,21 +581,8 @@ def check_parameter_changes(center_freq, sample_rate, gain, auto_gain):
     return False
 
 
-@callback(
-    Output("_", "children"),  # This output is not used
-    Input("_cleanup", "data"),
-)
-def cleanup(data):
-    """Cleanup function that runs when the app is shutting down"""
-    if signal_streamer.thread is not None:
-        logger.info("Cleaning up signal streamer on shutdown")
-        signal_streamer.stop_stream()
-    return no_update
-
-
 if __name__ == "__main__":
     # Add hidden div for cleanup
     app.layout.children.append(html.Div(id="_", style={"display": "none"}))
-    app.layout.children.append(dcc.Store(id="_cleanup"))
 
     app.run(debug=True, host="0.0.0.0")
