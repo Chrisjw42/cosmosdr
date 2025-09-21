@@ -1,5 +1,6 @@
 import numpy as np
 import structlog
+import time
 
 from dash import (
     Dash,
@@ -15,7 +16,11 @@ from dash import (
 import plotly.graph_objects as go
 
 from signal_acquisition import signal_streamer
+from signal_processing import get_frequency_space_np
 
+# How often the stream plot redraws
+UPDATE_FREQUENCY_HZ = 5
+DEFAULT_FREQUENCY = 1090
 
 logger = structlog.get_logger()
 
@@ -191,10 +196,10 @@ def create_base_figure():
     # Create initial figure with dark theme
     fig = go.Figure()
 
-    # Add initial trace with small amount of data to establish the plot
+    # Add initial trace with a single point to establish the plot
     fig.add_trace(
         go.Scatter(
-            x=[0],  # Start with a single point to establish the plot
+            x=[0],
             y=[0],
             mode="lines",
             name="Signal",
@@ -219,7 +224,7 @@ def create_base_figure():
         uirevision="constant",  # Keep zoom/pan state
     )
 
-    # Set axis properties with dark theme
+    # Axis styling
     grid_color = COLORS["background"]["grid"]
     axis_settings = dict(
         gridcolor=grid_color,
@@ -231,8 +236,13 @@ def create_base_figure():
         linewidth=1,
     )
 
+    # Apply axis styling
     fig.update_xaxes(**axis_settings)
-    fig.update_yaxes(**axis_settings)
+    fig.update_yaxes(
+        **axis_settings,
+        autorange=False,
+        range=[0, 100],
+    )
 
     return fig
 
@@ -266,9 +276,9 @@ app.layout = html.Div(
                                     dcc.Input(
                                         id="center-freq-input",
                                         type="number",
-                                        value=102.7,
-                                        min=10,
-                                        max=200,
+                                        value=DEFAULT_FREQUENCY,
+                                        min=25,
+                                        max=1300,
                                         step=0.1,
                                         style={**STYLES["input_dark"], "width": "100%"},
                                     ),
@@ -276,17 +286,21 @@ app.layout = html.Div(
                                 ),
                                 dcc.Slider(
                                     id="center-freq-slider",
-                                    min=10,
-                                    max=200,
-                                    value=102.7,
+                                    min=25,
+                                    max=1300,
+                                    value=DEFAULT_FREQUENCY,
+                                    step=1,
+                                    # step=(1300 - 25) / 9,  # 10 steps: 9 intervals
                                     marks={
-                                        i: {
-                                            "label": str(i),
+                                        int(25 + i * ((1300 - 25) / 9)): {
+                                            "label": str(
+                                                int(25 + i * ((1300 - 25) / 9))
+                                            ),
                                             "style": {
                                                 "color": COLORS["text"]["primary"]
                                             },
                                         }
-                                        for i in range(10, 201, 30)
+                                        for i in range(10)
                                     },
                                     tooltip={
                                         "placement": "bottom",
@@ -308,7 +322,7 @@ app.layout = html.Div(
                         dcc.Input(
                             id="sample-rate-input",
                             type="number",
-                            value=1e6,
+                            value=2.4e6,
                             min=1e5,
                             style={**STYLES["input_dark"], "width": "100%"},
                         ),
@@ -405,10 +419,12 @@ app.layout = html.Div(
         # Update interval
         dcc.Interval(
             id="signal-update-interval",
-            interval=100,  # 100ms = 10 updates per second
+            interval=1000 / UPDATE_FREQUENCY_HZ,  # ms
             n_intervals=0,
             disabled=True,
         ),
+        # Enable a ratchet mechanism to keep plot y-axis reasonable
+        dcc.Store(id="y-axis-max", data=1.0),
     ],
     id="main-container",
     style=STYLES["page"],  # Apply dark theme to main container
@@ -427,7 +443,7 @@ def sync_freq_controls(input_value, slider_value):
 
     if triggered_id == "center-freq-input":
         # Input box was changed
-        new_value = input_value if input_value is not None else 102.7
+        new_value = input_value if input_value is not None else DEFAULT_FREQUENCY
         return new_value, new_value
     else:
         # Slider was changed
@@ -461,6 +477,15 @@ def toggle_stream(n_clicks, center_freq, sample_rate, gain, auto_gain, button_te
     if not n_clicks:  # Skip if the button hasn't been clicked
         return no_update
 
+    logger.info(
+        "Stream toggle requested",
+        button_text=button_text,
+        center_freq=center_freq,
+        sample_rate=sample_rate,
+        gain=gain,
+        auto_gain=auto_gain,
+    )
+
     is_auto = "auto" in (auto_gain or [])
     sdr_gain = "auto" if is_auto else gain
 
@@ -472,11 +497,18 @@ def toggle_stream(n_clicks, center_freq, sample_rate, gain, auto_gain, button_te
             signal_streamer.stop_stream()
 
             # Start new stream with current parameters
+            logger.info(
+                "Starting stream",
+                center_freq_mhz=center_freq * 1e6,
+                sample_rate=sample_rate,
+                sdr_gain=sdr_gain,
+            )
             signal_streamer.start_stream(
                 center_freq=center_freq * 1e6,
                 sample_rate=sample_rate,
                 sdr_gain=sdr_gain,
             )
+            logger.info("Stream started successfully")
 
             # Update stream parameters
             stream_params.update(
@@ -536,21 +568,76 @@ def toggle_stream(n_clicks, center_freq, sample_rate, gain, auto_gain, button_te
 
 @callback(
     Output("signal-plot", "extendData"),
+    Output("y-axis-max", "data"),
+    # Output("signal-plot", "relayoutData"),
     Input("signal-update-interval", "n_intervals"),
+    State("y-axis-max", "data"),
 )
-def stream_signal(n_intervals):
+def stream_signal(n_intervals, y_axis_max):
     if not stream_params.active:
         return no_update
 
+    start_time = time.time()
+
     signal_data = signal_streamer.current_signal
     if len(signal_data) == 0:
+        logger.info("No signal data available")
         return no_update
 
-    x = np.arange(len(signal_data))
-    y = np.abs(signal_data)
+    logger.info("Processing signal data", data_length=len(signal_data))
+
+    freqs, s_fft, s_mag_fft, s_angle_fft = get_frequency_space_np(
+        signal_data, stream_params.center_freq * 1e6, stream_params.sample_rate
+    )
+    processing_time = time.time() - start_time
+    logger.info(
+        "Signal processing complete",
+        processing_time=processing_time,
+        output_length=len(freqs),
+    )
+
+    x = freqs
+    y = s_mag_fft
+
+    plot_start_time = time.time()
 
     # Replace instead of extend by "resetting"
-    return {"x": [x], "y": [y]}, [0], len(x)  # the third arg clears before extending
+    # the third arg clears before extending, so we clear the previous frame's plot
+    result = {"x": [x], "y": [y]}, [0], len(x)
+
+    plot_time = time.time() - plot_start_time
+    total_time = time.time() - start_time
+    logger.info(
+        "Plot update complete",
+        plot_preparation_time=plot_time,
+        total_callback_time=total_time,
+        points_plotted=len(x),
+    )
+
+    # Update the y-axis max if the new data exceeds it
+    candidate_new_y_max = float(np.max(y))
+    if candidate_new_y_max > y_axis_max:
+        next_y_max = candidate_new_y_max * 1.1  # Add 10% headroom
+        logger.info("Updating y-axis max", new_y_max=next_y_max)
+    else:
+        next_y_max = y_axis_max
+        logger.info("Retaining y-axis max", new_y_max=next_y_max)
+
+    return result, next_y_max
+
+
+# TODO: this y axis rescaling is not working, figure it out
+@callback(
+    Output("signal-plot", "relayoutData"),
+    Input("y-axis-max", "data"),
+)
+def update_yaxis(y_axis_max):
+    if not y_axis_max:
+        return no_update
+    return {
+        "yaxis.range": [0, y_axis_max],
+        "yaxis.autorange": False,
+    }
 
 
 @callback(
@@ -565,19 +652,29 @@ def stream_signal(n_intervals):
 def check_parameter_changes(center_freq, sample_rate, gain, auto_gain):
     """Validate all parameters"""
     # Check center frequency
-    if center_freq is None or center_freq < 10 or center_freq > 200:
+    if center_freq is None or center_freq < 25 or center_freq > 1300:
+        logger.info("Invalid center frequency", center_freq=center_freq)
         return True
 
     # Check sample rate
     if sample_rate is None or sample_rate < 1e5:
+        logger.info("Invalid sample rate", sample_rate=sample_rate)
         return True
 
     # Check gain if not in auto mode
     is_auto = "auto" in (auto_gain or [])
     if not is_auto and (gain is None or gain < 0 or gain > 50):
+        logger.info("Invalid gain setting", gain=gain, auto_gain=auto_gain)
         return True
 
     # All parameters are valid
+    logger.info(
+        "Parameters validated successfully",
+        center_freq=center_freq,
+        sample_rate=sample_rate,
+        gain=gain,
+        auto_gain=auto_gain,
+    )
     return False
 
 
