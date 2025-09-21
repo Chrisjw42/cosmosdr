@@ -96,6 +96,7 @@ class SignalStreamer:
             logger.info("Acquisition loop started")
             while self.enabled:
                 self.current_signal = sdr.read_samples(4096)
+                time.sleep(0.01)
 
         except Exception as e:
             logger.exception("Error in acquisition loop")
