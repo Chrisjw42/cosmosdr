@@ -13,10 +13,11 @@ from dash import (
     no_update,
     callback_context,
 )
-import plotly.graph_objects as go
 
-from signal_acquisition import signal_streamer
-from signal_processing import get_frequency_space_np
+from cosmosdr.signal_acquisition import signal_streamer
+from cosmosdr.signal_processing import get_frequency_space_np
+from cosmosdr.config import COLORS, STYLES
+from cosmosdr.plotting import create_base_figure
 
 # How often the stream plot redraws
 UPDATE_FREQUENCY_HZ = 10
@@ -94,157 +95,6 @@ class StreamParams:
 
 # Initialize stream parameters
 stream_params = StreamParams()
-
-
-# Define base styles for light/dark mode
-# Define theme colors and styles
-COLORS = {
-    "background": {
-        "page": "#1a1a1a",
-        "control_panel": "#2d2d2d",
-        "input": "#3d3d3d",
-        "slider": "#3d3d3d",
-        "plot": "#1a1a1a",
-        "grid": "#2d2d2d",
-    },
-    "text": {
-        "primary": "#ffffff",
-        "label": "#ffffff",
-    },
-    "border": {
-        "input": "#5d5d5d",
-    },
-    "signal": "#21918c",
-    "status": {
-        "active": "#4CAF50",
-        "inactive": "#666",
-        "error": "#f44336",
-    },
-}
-
-# Define base styles using the color configuration
-STYLES = {
-    "page": {
-        "backgroundColor": COLORS["background"]["page"],
-        "color": COLORS["text"]["primary"],
-        "minHeight": "100vh",
-        "padding": "2rem",
-        "margin": "0",
-        "position": "absolute",
-        "top": "0",
-        "left": "0",
-        "right": "0",
-        "bottom": "0",
-    },
-    "control_panel": {
-        "backgroundColor": COLORS["background"]["control_panel"],
-        "borderRadius": "8px",
-        "padding": "1.5rem",
-        "marginRight": "1rem",
-        "width": "300px",
-        "height": "calc(100vh - 4rem)",  # Full height minus padding
-        "position": "fixed",
-        "left": "2rem",
-        "top": "2rem",
-        "overflowY": "auto",
-    },
-    "main_content": {
-        "marginLeft": "calc(300px + 3rem)",  # Control panel width + margin
-        "paddingTop": "2rem",
-    },
-    "control_group": {
-        "marginBottom": "2rem",
-    },
-    "label": {
-        "color": COLORS["text"]["label"],
-        "marginBottom": "0.5rem",
-    },
-    "input": {
-        "backgroundColor": COLORS["background"]["input"],
-        "color": COLORS["text"]["primary"],
-        "borderColor": COLORS["border"]["input"],
-    },
-}
-
-
-# Add any missing styles for dark mode components
-STYLES["input_dark"] = {
-    "backgroundColor": COLORS["background"]["input"],
-    "color": COLORS["text"]["primary"],
-    "borderColor": COLORS["border"]["input"],
-    "borderRadius": "4px",
-    "padding": "0.5rem",
-}
-
-STYLES["slider"] = {
-    "color": COLORS["text"]["primary"],
-}
-
-STYLES["button"] = {
-    "backgroundColor": COLORS["background"]["input"],
-    "color": COLORS["text"]["primary"],
-    "border": f"1px solid {COLORS['border']['input']}",
-    "borderRadius": "4px",
-    "padding": "0.5rem 1rem",
-    "cursor": "pointer",
-    "transition": "all 0.2s ease-in-out",
-}
-
-
-# Create base figure using the color configuration
-def create_base_figure():
-    # Create initial figure with dark theme
-    fig = go.Figure()
-
-    # Add initial trace with a single point to establish the plot
-    fig.add_trace(
-        go.Scatter(
-            x=[0],
-            y=[0],
-            mode="lines",
-            name="Signal",
-            line=dict(
-                color=COLORS["signal"],
-                width=1,
-            ),
-        )
-    )
-
-    # Set initial layout with dark theme
-    fig.update_layout(
-        template="plotly_dark",  # Use dark template as base
-        title="Real-time Signal",
-        xaxis_title="Sample",
-        yaxis_title="Magnitude",
-        showlegend=False,
-        margin=dict(l=40, r=40, t=40, b=40),
-        plot_bgcolor=COLORS["background"]["plot"],
-        paper_bgcolor=COLORS["background"]["plot"],
-        font_color=COLORS["text"]["primary"],
-        uirevision="constant",  # Keep zoom/pan state
-    )
-
-    # Axis styling
-    grid_color = COLORS["background"]["grid"]
-    axis_settings = dict(
-        gridcolor=grid_color,
-        zerolinecolor=grid_color,
-        showline=True,
-        linecolor=grid_color,
-        showgrid=True,
-        gridwidth=1,
-        linewidth=1,
-    )
-
-    # Apply axis styling
-    fig.update_xaxes(**axis_settings)
-    fig.update_yaxes(
-        **axis_settings,
-        autorange=False,
-        range=[0, 100],
-    )
-
-    return fig
 
 
 # Define the layout

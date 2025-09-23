@@ -116,29 +116,35 @@ def get_sdr(center_freq=102.7e6, sample_rate=1e6, sdr_gain="auto"):
     sdr.center_freq = center_freq
     sdr.freq_correction = 60  # PPM
     sdr.gain = sdr_gain
+
+    # Bin the first 2048 samples, they are just padding
+    sdr.read_samples(2048)
     return sdr
 
 
-async def acquire_signal(center_freq=102.7e6, sample_rate=1e6):
-    """
-    # TODO move this to a demo script, or remove.
+def acquire_signal(sdr, n_reads: int, n_samples=2048) -> np.ndarray:
+    """_summary_
 
+    Args:
+        sdr (_type_): sdr object.
+        n_reads (int): how many times to read sammples from the SDR
+        n_samples (int, optional): passthrough to SDR. Defaults to 2048.
+    Returns:
+        np.ndarray: array of shape (n_reads, n_samples) containing complex samples
     """
     try:
-        sdr = get_sdr(center_freq=center_freq, sample_rate=sample_rate)
+        # Preallocate memory
+        reads = np.zeros([n_reads, n_samples], dtype=np.complex64)
+        for i in range(n_reads):
+            reads[i, :] = sdr.read_samples(num_samples=n_samples)
 
-        # Bin the first 2048 samples, they are just padding
-        sdr.read_samples(2048)
-
-        for i in range(100):
-            logger.info(i)
-            s = sdr.read_samples(4096)
-            logger.info(s[:16])
     except Exception as e:
-        raise e
-    finally:
         # Always ensure the sdr connection is closed, otherwise there can be issues with USB ports remaining busy
         sdr.close()
+        raise e
+
+    return reads
+    # finally:
 
 
 signal_streamer = SignalStreamer()
