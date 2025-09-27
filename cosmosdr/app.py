@@ -19,8 +19,8 @@ from cosmosdr.signal_processing import get_frequency_space_np
 from cosmosdr.config import COLORS, STYLES
 from cosmosdr.plotting import create_base_figure
 
-# How often the stream plot redraws
-UPDATE_FREQUENCY_HZ = 10
+# How often the stream plot updates
+UPDATES_PER_SECOND = 10
 DEFAULT_FREQUENCY = 1090
 
 logger = structlog.get_logger()
@@ -269,7 +269,7 @@ app.layout = html.Div(
         # Update interval
         dcc.Interval(
             id="signal-update-interval",
-            interval=1000 / UPDATE_FREQUENCY_HZ,  # ms
+            interval=1000 / UPDATES_PER_SECOND,  # ms
             n_intervals=0,
             disabled=True,
         ),

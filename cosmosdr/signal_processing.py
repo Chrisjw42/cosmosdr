@@ -14,6 +14,9 @@ def get_frequency_space_np(s, center_freq, sample_rate):
     # The output x axis ranges from -(x/2) to (x/2), where x is the sample rate, and 0 is centered on the target frequency
     # In this case, it is 102.2 MHz +/- ~2 MHz
 
+    # apply hamming window to ensure the first and last samples align
+    s = s * np.hamming(s.shape[0])
+
     # fft the input, and center it on 0
     s_fft = np.fft.fftshift(np.fft.fft(s))
 

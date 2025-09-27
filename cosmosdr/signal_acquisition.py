@@ -132,12 +132,15 @@ def acquire_signal(sdr, n_reads: int, n_samples=2048) -> np.ndarray:
     Returns:
         np.ndarray: array of shape (n_reads, n_samples) containing complex samples
     """
+    t0 = time.time()
     try:
         # Preallocate memory
         reads = np.zeros([n_reads, n_samples], dtype=np.complex64)
         for i in range(n_reads):
             reads[i, :] = sdr.read_samples(num_samples=n_samples)
+        t1 = time.time()
 
+        print(f"Acquired {n_reads} reads of {n_samples} samples in {t1 - t0:.2f}s")
     except Exception as e:
         # Always ensure the sdr connection is closed, otherwise there can be issues with USB ports remaining busy
         sdr.close()
