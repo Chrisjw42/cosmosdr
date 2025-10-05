@@ -7,6 +7,8 @@
 
 import numpy as np
 import pandas as pd
+from scipy.signal import resample_poly
+from fractions import Fraction
 
 
 def get_frequency_space_np(s, center_freq, sample_rate):
@@ -51,3 +53,33 @@ def get_frequency_space_df(s, center_freq, sample_rate):
     dfft["frequency"] = np.linspace(
         center_freq - (sample_rate / 2), center_freq + (sample_rate / 2), dfft.shape[0]
     )
+
+
+def resample_to_target(s: np.ndarray, orig_sr: float, target_sr: float):
+    """Try to rebuild the underlying analog waveform that would have produced your samples.
+
+    This makes the 'bandlimited reconstruction assumption', which says that, 'I will construct
+    the smoothest possible signal I can, on the assumption that there is no received signal above
+    the nyquist of the sample rate.
+
+    Principally, we make an assumption that the frequency is related to the sample rate, which of course may not be
+    true, but we know it is in our case.
+
+    Generates the mathematically correct reconstruction of what the signal would look like between samples (assuming
+    the original SDR samples met Nyquist(which is 1/2 sample rate) )
+
+    Nyquist is the maximum frequency you can capture without ambiguity at a given sample rate..
+    """
+
+    # TODO some input validation on the divisibility of orig_sr and target_sr
+
+    # find integer up/down using Fraction
+    ratio = Fraction(int(target_sr), int(orig_sr)).limit_denominator()
+    up, down = ratio.numerator, ratio.denominator
+    return resample_poly(s, up, down), target_sr
+
+
+def iq_to_envelope(iq):
+    """assumes `iq` is a 1D complex64 numpy array from your SDR, and sr is sample_rate (Hz)"""
+
+    return np.abs(iq)

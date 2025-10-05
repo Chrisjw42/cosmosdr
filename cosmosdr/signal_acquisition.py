@@ -14,6 +14,10 @@ from threading import Thread
 logger = structlog.get_logger()
 
 
+class SDRStore:
+    sdr: RtlSdr | None = None
+
+
 class SignalStreamer:
     """
     A Tool for establishing streams of data from an RTL-SDR note that:
@@ -107,10 +111,24 @@ class SignalStreamer:
             logger.info("SDR closed, acquisition loop ended")
 
 
+signal_streamer = SignalStreamer()
+sdrStore = SDRStore()
+
+
 def get_sdr(center_freq=102.7e6, sample_rate=1e6, sdr_gain="auto"):
     """
     Establish a connection to the RTL-SDR
+
     """
+    # TODO update the values if get() is called with different params, rather than instantiating a new one
+    if sdrStore.sdr is not None:
+        logger.warning(
+            "SDR instance already exists, closing it before creating a new one"
+        )
+        # We already have an SDR instance, just update the params
+        sdrStore.sdr.close()
+        sdrStore.sdr = None
+
     sdr = RtlSdr()
     sdr.sample_rate = sample_rate
     sdr.center_freq = center_freq
@@ -119,6 +137,9 @@ def get_sdr(center_freq=102.7e6, sample_rate=1e6, sdr_gain="auto"):
 
     # Bin the first 2048 samples, they are just padding
     sdr.read_samples(2048)
+
+    sdrStore.sdr = sdr
+
     return sdr
 
 
@@ -147,10 +168,19 @@ def acquire_signal(sdr, n_reads: int, n_samples=2048) -> np.ndarray:
         raise e
 
     return reads
-    # finally:
+    # finally:, close sdr
 
 
-signal_streamer = SignalStreamer()
+def get_index_of_highest_peak(s):
+    """
+    Assumes the input is the result of acquire_signal(), meaning it is an (n, m) ndarray, with n reads
+
+    Returns the index with the highest peak, essentially giving you an index at which there is very likely a signal of some kind.
+    """
+    index = s.max(axis=1).argmax()
+    logger.info("Index of sampling batches with the highest peak: %s", index)
+    return index
+
 
 if __name__ == "__main__":
     # Example of how to use the SignalStreamer

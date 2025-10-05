@@ -1,5 +1,13 @@
+import pandas as pd
 import plotly.graph_objects as go
+import plotly.express as px
 from cosmosdr.config import COLORS
+
+
+def basic_plot(iq):
+    fig = px.bar(pd.DataFrame(iq).abs())
+    fig.update_traces(marker_line_width=0, selector=dict(type="bar"))
+    return fig
 
 
 # Create base figure using the color configuration
