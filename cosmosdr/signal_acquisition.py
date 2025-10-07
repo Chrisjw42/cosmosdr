@@ -175,9 +175,12 @@ def get_index_of_highest_peak(s):
     """
     Assumes the input is the result of acquire_signal(), meaning it is an (n, m) ndarray, with n reads
 
+    For each read, find the 10th highest signal pulse received. This is more resillient to outlier pulses, if we received an ADSB from an aircraft, there wil be dozens of high strength pulses at roughly the same strength.
+
     Returns the index with the highest peak, essentially giving you an index at which there is very likely a signal of some kind.
     """
-    index = s.max(axis=1).argmax()
+    tenth_highest_pulse_per_read = np.sort(np.abs(s))[:, -10]
+    index = tenth_highest_pulse_per_read.argmax()
     logger.info("Index of sampling batches with the highest peak: %s", index)
     return index
 

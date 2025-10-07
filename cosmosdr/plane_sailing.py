@@ -11,6 +11,12 @@ import cosmosdr.signal_processing as s_proc
 
 logger = structlog.get_logger()
 
+ADSB_FREQUENCY = 1090e6
+# Total number of bits in a single ADSB message
+ADSB_BITS = 112
+# One microsecond timeslot for one bit, 'on' if signal is within the first half of this slot
+# ADSB_SLOT_LENGTH = 1 / 1e6
+
 
 def get_example_dataset(
     center_freq=1090.0, sample_rate=2.4e6, n_reads=32, n_samples=4096
@@ -95,13 +101,47 @@ def downsample_to_buckets(iq_mag, samples_per_us):
 
     Uses mean to downsample, but we could also take the max from the bucket.
     """
+    # 0,0,0,0,0,0,1,1,1,1,1...
+    # We want 0.5us buckets, so we need to half the samples_per_us
     indices = np.arange(len(iq_mag)) // (samples_per_us / 2)
+
     data_downsampled = pd.DataFrame(iq_mag).groupby(indices).mean()
     return data_downsampled[0].to_numpy()
 
 
+def threshold_elbow(s, upper_pulses_to_ignore=20):
+    """
+    Identify the largest jump in values, after they have been sorted. Works well in cases where the
+    pulses are well above the background noise.
+
+    If we received an ADSB from an aircraft, there wil be dozens of high strength pulses at roughly the same strength,
+    so we ignore the top N pulses.
+    """
+    x = np.sort(s)[:-upper_pulses_to_ignore]
+    diffs = np.diff(x)
+
+    # grab the location of largest jump
+    gap_idx = np.argmax(diffs)
+    # Return the value half-way between the largest jump
+    return np.mean([x[gap_idx], x[gap_idx + 1]])  # threshold is value at gap
+
+
+def convert_to_binary(iq_mag):
+    """
+    Use an elbow analysis to identify a threshold, then convert the signal to binary based on this threshold.
+
+    The returned signal is a binary array indicating the presence of pulses, it is NOT yet decoded, or represented as binary
+    """
+
+    threshold = threshold_elbow(iq_mag)
+    iq_mag_bin = (iq_mag > threshold).astype(int)
+    return iq_mag_bin
+
+
 def preprocess_iq(iq, orig_sr, target_sr):
-    """Resample the IQ data to a target sample rate, and extract the envelope
+    """Resample the IQ data to a target sample rate, and optimise to highlight the presence of pulses
+
+    The returned data is a 1D array of magnitudes, with one value per 0.5us bucket
 
     Then, Find the optimal phase starting position
     - We don't know the exact timing of the pulses
@@ -117,4 +157,75 @@ def preprocess_iq(iq, orig_sr, target_sr):
 
     iq_mag = shift_to_optimal_phase(iq_mag, samples_per_us=samples_per_us)
 
+    iq_mag = downsample_to_buckets(iq_mag, samples_per_us=samples_per_us)
+
     return iq_mag
+
+
+def decode_to_adsb(s_bin):
+    """
+    Take a binary pulse signal, and convert it to ADSB 1s and 0s.
+    """
+    # mode S preamble, 8us
+    preamble = [1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0]
+    len_preamble = len(preamble)
+    assert len_preamble == 16
+
+    # Find where the preamble starts, if at all
+    for i in range(len(s_bin)):
+        candidate = s_bin[i : i + len_preamble]
+        if np.array_equal(candidate, preamble):
+            logger.info("ADSB preamble identified @ idx: %s, damn!", i)
+            break
+        if i >= (len(s_bin) - len_preamble):
+            logger.info("No ADSB preamble found, exiting")
+            return None
+
+    # the index of the last piece of the preamble
+    final_preamble_idx = i + len_preamble
+
+    # Drop the preamble off the front of the burst
+    adsb = s_bin[final_preamble_idx:]
+
+    # Note, the last part of the signal may indeed be one or many zeros, if this doens't fit into a standard msg length, that's likely why
+    adsb = np.trim_zeros(adsb)
+
+    # If we end up with exactly one less bit than was expected, then assume we just chopped off a bit
+    if (len(adsb) + 1) == ADSB_BITS * 2:
+        adsb = np.append(adsb, 0)
+
+    # Take every other value (a.k.a. take the value in the first half of each bucket
+    # This is the same as 'if there is a pule in the first half, then 1.'
+    adsb = adsb[::2]
+    return adsb
+
+
+def main():
+    """Example pipeline to acquire and process an ADSB signal from an SDR"""
+
+    center_freq = ADSB_FREQUENCY
+    # reccomended upper limit of sample rate. Fast enough to oversample
+    sample_rate = 2.4e6
+    n_reads = 32
+    n_samples = 4096
+
+    # choose integer samples per microsecond: 12 samples/us
+    # This is a good choice, because 6x2 = 12, and 5*2.4=12, so we can sample to 12, then subsample back to 1 block per 0.5us
+    target_sr = 12e6
+
+    # samples_per_us_after_upsampling = int(round(target_sr / 1e6))  # 12
+
+    iq = get_example_dataset(
+        center_freq=center_freq,
+        sample_rate=sample_rate,
+        n_reads=n_reads,
+        n_samples=n_samples,
+    )
+
+    iq_mag = preprocess_iq(iq, orig_sr=sample_rate, target_sr=target_sr)
+
+    iq_mag_bin = convert_to_binary(iq_mag)
+
+    adsb = decode_to_adsb(iq_mag_bin)
+
+    return adsb
