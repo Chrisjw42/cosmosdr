@@ -1,13 +1,16 @@
 """Precursor module with aircraft processing logic, that will eventually be moved into a standalone package"""
 
+import time
 from copy import copy
 
 import numpy as np
 import pandas as pd
 import structlog
+import rs1090
 
 import cosmosdr.signal_acquisition as s_acq
 import cosmosdr.signal_processing as s_proc
+
 
 logger = structlog.get_logger()
 
@@ -43,7 +46,7 @@ def trim_iq_around_peak(iq_mag, n_either_side=1000):
     return iq_mag[idx - n_either_side : idx + n_either_side]
 
 
-def shift_to_optimal_phase(iq_mag, samples_per_us):
+def shift_to_optimal_phase(iq_mag, samples_per_us, verbose=False):
     """Given that the signal is almost certainly not aligned perfectly with the initial sampling start time, and our
     eventual aim of bucketing these samples into 0.5us buckets, we want to try and center the aircraft pulses well
     onto the buckets.
@@ -87,9 +90,10 @@ def shift_to_optimal_phase(iq_mag, samples_per_us):
             max_score_phase = phase
 
     # TODO do this in numpy, dict is lame
-    logger.info("----------")
-    logger.info("max_score: %s", max_score)
-    logger.info("max_score_phase: %s", max_score_phase)
+    if verbose:
+        logger.info("----------")
+        logger.info("max_score: %s", max_score)
+        logger.info("max_score_phase: %s", max_score_phase)
 
     iq_mag = iq_mag[max_score_phase:]
     return iq_mag
@@ -120,6 +124,9 @@ def threshold_elbow(s, upper_pulses_to_ignore=20):
     x = np.sort(s)[:-upper_pulses_to_ignore]
     diffs = np.diff(x)
 
+    if len(diffs) == 0:
+        raise ValueError("Not enough unique values to determine a threshold")
+
     # grab the location of largest jump
     gap_idx = np.argmax(diffs)
     # Return the value half-way between the largest jump
@@ -138,7 +145,7 @@ def convert_to_binary(iq_mag):
     return iq_mag_bin
 
 
-def preprocess_iq(iq, orig_sr, target_sr):
+def preprocess_iq(iq, orig_sr, target_sr, verbose=False):
     """Resample the IQ data to a target sample rate, and optimise to highlight the presence of pulses
 
     The returned data is a 1D array of magnitudes, with one value per 0.5us bucket
@@ -155,14 +162,16 @@ def preprocess_iq(iq, orig_sr, target_sr):
 
     samples_per_us = int(round(target_sr / 1e6))  # 12
 
-    iq_mag = shift_to_optimal_phase(iq_mag, samples_per_us=samples_per_us)
+    iq_mag = shift_to_optimal_phase(
+        iq_mag, samples_per_us=samples_per_us, verbose=verbose
+    )
 
     iq_mag = downsample_to_buckets(iq_mag, samples_per_us=samples_per_us)
 
     return iq_mag
 
 
-def decode_to_adsb(s_bin):
+def decode_to_adsb(s_bin, verbose=False):
     """
     Take a binary pulse signal, and convert it to ADSB 1s and 0s.
     """
@@ -178,7 +187,8 @@ def decode_to_adsb(s_bin):
             logger.info("ADSB preamble identified @ idx: %s, damn!", i)
             break
         if i >= (len(s_bin) - len_preamble):
-            logger.info("No ADSB preamble found, exiting")
+            if verbose:
+                logger.info("No ADSB preamble found, exiting")
             return None
 
     # the index of the last piece of the preamble
@@ -200,10 +210,98 @@ def decode_to_adsb(s_bin):
     return adsb
 
 
+def convert_adsb_binary_to_hex(adsb):
+    """Convert a binary array of 1s and 0s to a hex string, as is required by rs1090.decode()"""
+    # Step 1: pack bits into bytes
+    packed = np.packbits(adsb)
+
+    # Step 2: convert to hex string
+    hex_string = packed.tobytes().hex()
+
+    return hex_string
+
+
+def stream_and_decode_adsb(
+    n,
+    n_reads_per_acquisition=32,
+    n_samples_per_read=4096,
+    sleep_time=0.1,
+    sample_rate=2.4e6,
+    target_sr=12e6,
+    verbose=False,
+):
+    """Start the signal streamer, then repeatedly grab the current signal, process it, and try to decode any ADSB messages.
+
+    n: number of reads to attempt
+    n_reads_per_acquisition: number of reads to acquire in each acquisition loop iteration
+    n_samples_per_read: number of samples per read in each acquisition loop iteration
+    sleep_time: time to wait between reads, purely for managing compute load
+    sample_rate: sample rate to use for the SDR, needs to be adjusted in-line with target_sr, see process_iq()
+    target_sr: target sample rate to resample to for processing, see process_iq()
+    verbose: if True, log more information
+    """
+    hits = 0
+    # Ensure any existing stream is stopped
+    s_acq.streamer.stop_stream()
+
+    # Kick off a stream
+    s_acq.streamer.start_stream(
+        center_freq=1090e6,
+        sample_rate=sample_rate,
+        n_reads_per_acquisition=n_reads_per_acquisition,
+        n_samples_per_read=n_samples_per_read,
+        sleep_length_s=sleep_time
+        / 2,  # Ensure the signal stream is updated more frequently than the reads happen
+        sdr_gain="auto",
+    )
+    time.sleep(3)  # Give the streamer a moment to start up
+
+    aircraft_info = []
+
+    for i in range(n):
+        try:
+            # Sleep a bit to allow the signal streamer to fill the buffer, and to not hammer CPU
+            time.sleep(sleep_time)
+            signal = s_acq.streamer.get_current_signal()
+
+            # Pick the read with the highest peak, which is likely an ADSB pulse
+            index_of_strongest_signal = s_acq.get_index_of_highest_peak(
+                signal, verbose=verbose
+            )
+            iq = signal[index_of_strongest_signal]
+
+            # Only do the expensive signal processing on the strongest read
+            iq_mag = preprocess_iq(
+                iq, orig_sr=sample_rate, target_sr=target_sr, verbose=verbose
+            )
+            iq_mag_bin = convert_to_binary(iq_mag)
+            adsb = decode_to_adsb(iq_mag_bin, verbose=verbose)
+
+            if adsb is not None:
+                # We have what looks like an ADSB message, try to decode it
+                if verbose:
+                    logger.info("ADSB message identified, attempting to decode")
+                hex_string = convert_adsb_binary_to_hex(adsb)
+                decoded = rs1090.decode(hex_string)
+                if decoded:
+                    logger.info("ADSB message decoded: %s", decoded)
+                    hits += 1
+                    aircraft_info.append(decoded)
+                else:
+                    decoded = None
+
+        except Exception as e:
+            logger.warning("Error processing read, moving on to next read", error=e)
+            # Don't worry if one read fails, just move on to the next read
+            # We expect to receive chopped off signals and imperfect data
+    if verbose:
+        logger.info("Hit rate: %s\t/\t%s", hits, n)
+    return aircraft_info
+
+
 def main():
     """Example pipeline to acquire and process an ADSB signal from an SDR"""
 
-    center_freq = ADSB_FREQUENCY
     # reccomended upper limit of sample rate. Fast enough to oversample
     sample_rate = 2.4e6
     n_reads = 32
@@ -216,7 +314,7 @@ def main():
     # samples_per_us_after_upsampling = int(round(target_sr / 1e6))  # 12
 
     iq = get_example_dataset(
-        center_freq=center_freq,
+        center_freq=ADSB_FREQUENCY,
         sample_rate=sample_rate,
         n_reads=n_reads,
         n_samples=n_samples,

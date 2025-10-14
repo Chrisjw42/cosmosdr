@@ -21,29 +21,38 @@ class SDRStore:
 class SignalStreamer:
     """
     A Tool for establishing streams of data from an RTL-SDR note that:
-    - this takes a second or so
-    - only one connection can be open at a time
+    - The SDR connection takes a second or so to start up
+    - Only one connection can be open at a time
     - if the connection is not closed properly, the USB port can remain busy
 
     So, most of this architecture is built around these constraints, we only recreate the connection when we need to.
 
     This object stores the current signal for reference by other logic.
 
-    At any time, the .enabled bool can be set to false, to stop processing.
+    At any time, the stop_stream() function can be used to stop processing.
 
-    Can only stream one signal at a time, because we can only hold one SDR signal open at once.
+    We can only stream one signal at a time, because we can only hold one SDR signal open at once.
     """
 
     def can_start_acquisition(self):
         return self.thread is None
 
     def __init__(self):
-        # If thread is none, then no acquisition loop is running, and we can start one
         self.enabled: bool = False
+        # If thread is none, then no acquisition loop is running, and we can start one
         self.thread: Thread | None = None
         self.current_signal = np.array([])
+        self.read_is_available = False
 
-    def start_stream(self, center_freq: float, sample_rate: float, sdr_gain="auto"):
+    def start_stream(
+        self,
+        center_freq: float,
+        sample_rate: float,
+        n_reads_per_acquisition=1,
+        n_samples_per_read=2048,
+        sleep_length_s=0.025,
+        sdr_gain="auto",
+    ):
         """
         Tell the SignalStreamer to begin streaming with a givne set of parameters.
 
@@ -57,10 +66,26 @@ class SignalStreamer:
         # Start acquisition loop in background thread
         thread = Thread(
             target=self.signal_acquisition_loop,
-            args=(center_freq, sample_rate, sdr_gain),
+            args=(
+                center_freq,
+                sample_rate,
+                n_reads_per_acquisition,
+                n_samples_per_read,
+                sleep_length_s,
+                sdr_gain,
+            ),
             daemon=True,  # stops automatically if main thread exits
         )
         thread.start()
+        logger.info(
+            "SignalStreamer: Acquisition loop started with params",
+            center_freq=center_freq,
+            sample_rate=sample_rate,
+            n_reads_per_acquisition=n_reads_per_acquisition,
+            n_samples_per_read=n_samples_per_read,
+            sleep_length_s=sleep_length_s,
+            sdr_gain=sdr_gain,
+        )
         self.thread = thread
 
     def stop_stream(self):
@@ -78,11 +103,34 @@ class SignalStreamer:
         self.thread = None
         logger.info("SignalStreamer: Acquisition loop stopped")
 
+    def get_current_signal(self) -> np.ndarray:
+        """
+        Return the current signal, if it is available.
+
+        If a read is in progress, return an empty array.
+
+        We need this method to manage access to the current_signal variable, because it is being updated in a background thread.
+        """
+        while True:
+            if self.read_is_available:
+                break
+            time.sleep(0.001)  # wait 1ms before checking again
+
+        return self.current_signal
+
     def signal_acquisition_loop(
-        self, center_freq: float, sample_rate: float, sdr_gain="auto"
+        self,
+        center_freq: float,
+        sample_rate: float,
+        n_reads_per_acquisition=1,
+        n_samples_per_read=2048,
+        sleep_length_s=0.025,
+        sdr_gain="auto",
     ):
         """
         Efficiently handle the SDR connection and begin acquiring samples.
+
+        default parameters (n_reads_per_acquisition=1, n_samples_per_read=2048: int, sleep_length_s=0.025) allows 40 reads per second.
 
         This is intended to be run in a background thread.
 
@@ -98,10 +146,24 @@ class SignalStreamer:
             sdr.read_samples(2048)
 
             logger.info("Acquisition loop started")
+
+            # Preallocate memory
+            self.current_signal = np.zeros(
+                [n_reads_per_acquisition, n_samples_per_read], dtype=np.complex64
+            )
+
             while self.enabled:
-                self.current_signal = sdr.read_samples(2048)
-                # slight delay to avoid overwhelming the CPU, this allows 40FPS
-                time.sleep(0.025)
+                # Disallow reading while data is being written into the current_signal store
+                self.read_is_available = False
+
+                for i in range(n_reads_per_acquisition):
+                    self.current_signal[i, :] = sdr.read_samples(
+                        num_samples=n_samples_per_read
+                    )
+
+                # Allow reading during sleep
+                self.read_is_available = True
+                time.sleep(sleep_length_s)
 
         except Exception as e:
             logger.exception("Error in acquisition loop")
@@ -111,7 +173,7 @@ class SignalStreamer:
             logger.info("SDR closed, acquisition loop ended")
 
 
-signal_streamer = SignalStreamer()
+streamer = SignalStreamer()
 sdrStore = SDRStore()
 
 
@@ -144,7 +206,7 @@ def get_sdr(center_freq=102.7e6, sample_rate=1e6, sdr_gain="auto"):
 
 
 def acquire_signal(sdr, n_reads: int, n_samples=2048) -> np.ndarray:
-    """_summary_
+    """Example function to demonstrate repeated signal acquisition over a chunk of time.
 
     Args:
         sdr (_type_): sdr object.
@@ -171,7 +233,7 @@ def acquire_signal(sdr, n_reads: int, n_samples=2048) -> np.ndarray:
     # finally:, close sdr
 
 
-def get_index_of_highest_peak(s):
+def get_index_of_highest_peak(s, verbose=False):
     """
     Assumes the input is the result of acquire_signal(), meaning it is an (n, m) ndarray, with n reads
 
@@ -181,7 +243,8 @@ def get_index_of_highest_peak(s):
     """
     tenth_highest_pulse_per_read = np.sort(np.abs(s))[:, -10]
     index = tenth_highest_pulse_per_read.argmax()
-    logger.info("Index of sampling batches with the highest peak: %s", index)
+    if verbose:
+        logger.info("Index of sampling batches with the highest peak: %s", index)
     return index
 
 
@@ -189,15 +252,14 @@ if __name__ == "__main__":
     # Example of how to use the SignalStreamer
 
     # Create the shared state object
-    streamer = SignalStreamer()
-    signal_streamer.start_stream(center_freq=102.7e6, sample_rate=2.4e6)
+    streamer.start_stream(center_freq=102.7e6, sample_rate=2.4e6)
 
     # Print the output to demonstrate it is being updated
     for i in range(5):
         time.sleep(1)
-        logger.info(f"Snapshot {i}", signal=signal_streamer.current_signal[:16])
+        logger.info(f"Snapshot {i}", signal=streamer.current_signal[:16])
 
     # Stop the acquisition
-    signal_streamer.stop_stream()
+    streamer.stop_stream()
 
-    logger.info("Final signal snapshot", signal=signal_streamer.current_signal[:16])
+    logger.info("Final signal snapshot", signal=streamer.current_signal[:16])
