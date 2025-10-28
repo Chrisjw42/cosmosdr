@@ -233,19 +233,22 @@ def acquire_signal(sdr, n_reads: int, n_samples=2048) -> np.ndarray:
     # finally:, close sdr
 
 
-def get_index_of_highest_peak(s, verbose=False):
+def get_indices_of_highest_peaks(s, verbose=False, n=1):
     """
     Assumes the input is the result of acquire_signal(), meaning it is an (n, m) ndarray, with n reads
 
     For each read, find the 10th highest signal pulse received. This is more resillient to outlier pulses, if we received an ADSB from an aircraft, there wil be dozens of high strength pulses at roughly the same strength.
 
-    Returns the index with the highest peak, essentially giving you an index at which there is very likely a signal of some kind.
+    Returns the index(es) with the highest peak, essentially giving you an index at which there is very likely a signal of some kind.
     """
     tenth_highest_pulse_per_read = np.sort(np.abs(s))[:, -10]
-    index = tenth_highest_pulse_per_read.argmax()
+    # Get indices of n highest peaks in descending order
+    indices = np.argsort(tenth_highest_pulse_per_read)[-n:][::-1]
     if verbose:
-        logger.info("Index of sampling batches with the highest peak: %s", index)
-    return index
+        logger.info("Indices of sampling batches with the highest peaks: %s", indices)
+    return (
+        indices if n > 1 else indices[0]
+    )  # Return single value if n=1 for backward compatibility
 
 
 if __name__ == "__main__":
