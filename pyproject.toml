@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "cosmosdr"
 version = "0.1.0"
@@ -12,6 +16,10 @@ dependencies = [
     "setuptools>=80.9.0",
     "structlog>=25.4.0",
 ]
+
+[tool.setuptools.packages.find]
+include = ["cosmosdr*"]
+exclude = ["tests*", "build*"]
 
 [dependency-groups]
 dev = [
