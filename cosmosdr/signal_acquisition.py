@@ -177,10 +177,21 @@ streamer = SignalStreamer()
 sdrStore = SDRStore()
 
 
-def get_sdr(center_freq=102.7e6, sample_rate=1e6, sdr_gain="auto"):
+def get_sdr(
+    center_freq=102.7e6,
+    sample_rate=1e6,
+    sdr_gain="auto",
+    freq_correction_ppm: int = 60,
+    serial: str | None = None,
+):
     """
     Establish a connection to the RTL-SDR
 
+    freq_correction_ppm: tuner clock correction in parts per million. The default of 60 is kept for backwards
+        compatibility with plane-sailing; a TCXO-equipped dongle such as the RTL-SDR Blog V4 is accurate to ~1 ppm, so
+        60 *introduces* an error there (~65 kHz at 1090 MHz). Pass 0, or a measured value, for narrowband work.
+    serial: open the device with this USB serial (e.g. "00000001") rather than device index 0, so a second dongle can
+        be added later.
     """
     # TODO update the values if get() is called with different params, rather than instantiating a new one
     if sdrStore.sdr is not None:
@@ -191,10 +202,10 @@ def get_sdr(center_freq=102.7e6, sample_rate=1e6, sdr_gain="auto"):
         sdrStore.sdr.close()
         sdrStore.sdr = None
 
-    sdr = RtlSdr()
+    sdr = open_sdr(serial)
     sdr.sample_rate = sample_rate
     sdr.center_freq = center_freq
-    sdr.freq_correction = 60  # PPM
+    set_freq_correction(sdr, freq_correction_ppm)
     sdr.gain = sdr_gain
 
     # Bin the first 2048 samples, they are just padding
@@ -203,6 +214,29 @@ def get_sdr(center_freq=102.7e6, sample_rate=1e6, sdr_gain="auto"):
     sdrStore.sdr = sdr
 
     return sdr
+
+
+def open_sdr(serial: str | None = None) -> RtlSdr:
+    """Open the RTL-SDR, by USB serial if one is given, otherwise the first device."""
+    if serial is None:
+        return RtlSdr()
+    return RtlSdr(serial_number=serial)
+
+
+def set_freq_correction(sdr: RtlSdr, ppm: int) -> None:
+    """Set the tuner's ppm correction.
+
+    librtlsdr returns an error when asked to set the value it already holds (a fresh device holds 0), which pyrtlsdr
+    turns into an exception *and* closes the device. So skip the call when nothing would change.
+    """
+    ppm = int(round(ppm))
+    try:
+        current = sdr.freq_correction
+    except Exception:
+        current = None
+    if current == ppm:
+        return
+    sdr.freq_correction = ppm
 
 
 def acquire_signal(sdr, n_reads: int, n_samples=2048) -> np.ndarray:
