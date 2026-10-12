@@ -215,12 +215,11 @@ wheels = [
 
 [[package]]
 name = "cosmosdr"
-version = "0.1.0"
-source = { virtual = "." }
+version = "0.1.1"
+source = { editable = "." }
 dependencies = [
     { name = "pandas" },
     { name = "pyrtlsdr" },
-    { name = "rtl-sdr" },
     { name = "scipy" },
     { name = "setuptools" },
     { name = "structlog" },
@@ -242,7 +241,6 @@ ui = [
 requires-dist = [
     { name = "pandas", specifier = ">=2.3.2" },
     { name = "pyrtlsdr", specifier = ">=0.3.0" },
-    { name = "rtl-sdr", specifier = ">=1.0.0" },
     { name = "scipy", specifier = ">=1.16.2" },
     { name = "setuptools", specifier = ">=80.9.0" },
     { name = "structlog", specifier = ">=25.4.0" },
@@ -1219,18 +1217,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/6a/24/e3e72d265121e00b063aef3e3501e5b2473cf1b23511d56e529531acf01e/rpds_py-0.27.1-pp311-pypy311_pp73-musllinux_1_2_aarch64.whl", hash = "sha256:94c44ee01fd21c9058f124d2d4f0c9dc7634bec93cd4b38eefc385dabe71acbf", size = 560003, upload-time = "2025-08-27T12:16:08.06Z" },
     { url = "https://files.pythonhosted.org/packages/26/ca/f5a344c534214cc2d41118c0699fffbdc2c1bc7046f2a2b9609765ab9c92/rpds_py-0.27.1-pp311-pypy311_pp73-musllinux_1_2_i686.whl", hash = "sha256:df8b74962e35c9249425d90144e721eed198e6555a0e22a563d29fe4486b51f6", size = 590482, upload-time = "2025-08-27T12:16:10.137Z" },
     { url = "https://files.pythonhosted.org/packages/ce/08/4349bdd5c64d9d193c360aa9db89adeee6f6682ab8825dca0a3f535f434f/rpds_py-0.27.1-pp311-pypy311_pp73-musllinux_1_2_x86_64.whl", hash = "sha256:dc23e6820e3b40847e2f4a7726462ba0cf53089512abe9ee16318c366494c17a", size = 556523, upload-time = "2025-08-27T12:16:12.188Z" },
-]
-
-[[package]]
-name = "rtl-sdr"
-version = "1.0.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/03/dc/27281f6b1b5b0aa8a84b7828f5271fd6d2f8ead2d9a316fcd3b0e564cefd/RTL-SDR-1.0.0.tar.gz", hash = "sha256:5f817a3f72535b3f781aa24e980d4a95ad9b03d79f9167b8569defc0786b7dbb", size = 3555, upload-time = "2024-11-03T13:28:23.656Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e0/61/e5326e23e42cb9a50c43ec4400af6e84a0b82ef62a9f78756feddfde1501/RTL_SDR-1.0.0-py3-none-any.whl", hash = "sha256:15915df5cdb678226989e4eaa88efb3fd7ff1ae4acee5d2240a06cefdd0c8115", size = 4745, upload-time = "2024-11-03T13:28:21.992Z" },
 ]
 
 [[package]]
