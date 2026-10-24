@@ -14,7 +14,7 @@ from dash import (
     callback_context,
 )
 
-from cosmosdr.signal_acquisition import signal_streamer
+from cosmosdr.signal_acquisition import streamer as signal_streamer
 from cosmosdr.signal_processing import get_frequency_space_np
 from cosmosdr.config import COLORS, STYLES
 from cosmosdr.plotting import create_base_figure
