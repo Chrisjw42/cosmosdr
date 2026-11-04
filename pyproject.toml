@@ -16,6 +16,9 @@ dependencies = [
     "structlog>=25.4.0",
 ]
 
+[project.scripts]
+cosmosdr-lease = "cosmosdr.lease:main"
+
 [tool.setuptools.packages.find]
 include = ["cosmosdr*"]
 exclude = ["tests*", "build*"]
